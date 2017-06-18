@@ -1,0 +1,185 @@
+<?php
+
+/**
+ * @file
+ * Custom PCM code for ingest into HD environment
+ *
+ */
+
+function pcm_aspera_upload_menu() {
+  $items['node/%node/upload'] = array(
+    'title' => 'Upload',
+    'page callback' => 'pcm_aspera_upload_upload_tab',
+    'page arguments' => array(1),
+    'access arguments' => array(1),
+    'access callback' => 'pcm_aspera_upload_upload_access',
+    'type' => MENU_LOCAL_TASK,
+  );
+  return $items;
+}
+
+function pcm_aspera_upload_upload_access($node) {
+  if ($node->type == 'cm_show') {
+    global $user;
+    $account = user_load($user->uid);
+    if (node_access("update", $node, $account) === TRUE) {
+      return true;
+    }	
+  }
+  return false;
+}
+
+
+function pcm_aspera_upload_upload_tab($show) {
+  $output = '';
+  
+  // If there is a filename in field_expected_filename, show has been ingested
+  // and saved, no need to do any work.
+  if (isset($show->field_expected_filename[LANGUAGE_NONE][0]['value'])) {
+    return "<div class=\"messages status\">" .$show->field_expected_filename[LANGUAGE_NONE][0]['value'] . " has been uploaded.</div>";
+  }
+    
+  if (module_exists('aspera_ip_ranges') && aspera_ip_ranges_block()) {
+	    $output .= "<div class=\"messages warning\">This computer is not authorized to upload files from the IP address " . ip_address() . ". Please contact staff.</div>";
+	} else {
+	
+  // Since Shows created automatically don't populate certain requried fields at
+  // the form level, we need to make sure that at least one of the requied fields on the Show
+  // form has been populated. If it is we know that the form has been displayed and validated
+  // at least once either by the user themselves or by a staff person.
+  // in this case we test that the field 'field_filler' has been set.
+  if (isset($show->field_pcm_facilities[LANGUAGE_NONE][0]['value'])) {
+    $output .=  "<div class=\"messages status\">Show reviewed.</div>";
+    if ($show->field_cablecast_show_id[LANGUAGE_NONE][0]['value']) {
+      $sid = $show->field_cablecast_show_id[LANGUAGE_NONE][0]['value'];
+      $nid = arg(1);
+      $output .= "<div class=\"messages status\">Cablecast ID set.</div>";
+      //$output .= "<p><a href='http://upload.pcmtv.org/upload-file/$nid/?sid=$sid'>Begin Upload</a></p>";
+
+    }
+  }
+  // default the output to simply direct the user to review the Show (edit and save the node)
+  //dsm(date('l jS \of F Y h:i:s A', $show->changed));
+  //dsm(date('l jS \of F Y h:i:s A', strtotime('-1 hour')));
+  
+  // the 1 hour limit prevents data that's out of sync from getting pushed
+  if ($show->changed < strtotime('-1 hour')) {
+    $output .= 'You need to review the Show before uploading. ' . l('+ Review now.', "node/" . $show->nid . "/edit", array('query' => array('destination' => 'node/' . $show->nid . '/upload')));
+  } else {
+      
+
+	  
+    
+			aspera_add_application_js();
+	
+			//drupal_add_js(drupal_get_path('module', 'cm_aspera') . '/cm-aspera.js');
+			drupal_add_css(drupal_get_path('module', 'cm_aspera') . '/cm-aspera.css');
+		
+			$output .= drupal_render(drupal_get_form('pcm_aspera_upload_form'));
+		
+    }
+  }
+  
+
+	
+	
+  
+  return $output;
+}
+
+/**
+ * Implements hook_form().
+ */
+function pcm_aspera_upload_form($form, &$form_state) {
+  $form = array();
+      
+  $css = '.form-item-field-expected-filename { display: none }';
+  $css .= '.upload_button { display: none }';
+  $css .= '#edit-submit-button { display: none }';
+  
+  
+  $js = 'jQuery(document).ready(function($) {
+    
+       $("input[name=\'field_expected_file_format\']").change(function(){
+         $(\'.upload_button\').show();
+       });
+    });';
+  
+  drupal_add_css($css, $option['type'] = 'inline');
+  drupal_add_js($js, $option['type'] = 'inline');
+  
+  $options = array();
+  $options[0] = 'HD';
+  $options[1] = 'SD';
+
+    $form['field_expected_file_format'] = array(
+      '#type' => 'radios', //you can find a list of available types in the form api
+      '#title' => '1) Select Format',
+      '#size' => 2,
+      '#options' => $options,
+      '#required' => TRUE, //make this field required
+    );
+
+   $html = '<b>2) Select a File</b>';
+   
+   $form['html1'] = array(
+     '#markup' => $html,
+    );
+    
+
+		
+    $form['field_expected_filename'] = array(
+      '#type' => 'textfield', //you can find a list of available types in the form api
+      '#title' => 'Filename',
+      '#size' => 10,
+      '#required' => TRUE, //make this field required
+    );
+    
+    $form['submit_button'] = array(
+       '#type' => 'submit',
+       '#value' => t('Save'),
+     );
+    
+    $form['#submit'][] = 'pcm_aspera_upload_form_submit';
+    
+    // style="display: none;"
+     $html = '
+     
+    <div>&nbsp;</div>
+		<div id="aspera">
+		<div id="connect_installer" align:center style="display: none;"></div>
+		<div id="button_container" class="button_container"></div>
+		<div id="aspera_status_message" style="display: none;"></div>
+		<div id="progress_meter" style="display: none;"></div>
+		<div id="transfer_spec" style="display: none;"></div>
+		</div>
+		';
+		
+   $form['html2'] = array(
+     '#markup' => $html,
+    );
+    
+    return $form;
+}   
+
+function pcm_aspera_upload_form_validate($form, &$form_state) {
+}
+
+function pcm_aspera_upload_form_submit($form, &$form_state) {
+  $node = node_load(arg(1));
+  $node->field_expected_filename[LANGUAGE_NONE][0]['value'] = $form_state['values']['field_expected_filename'];
+  $node->field_expected_file_format[LANGUAGE_NONE][0]['value'] = $form_state['values']['field_expected_file_format'];
+  node_save($node);
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ */
+function pcm_aspera_upload_form_cm_show_node_form_alter(&$form, &$form_state) {
+  $node = $form['#node'];
+  if (!isset($node->field_technical_requirements[LANGUAGE_NONE][0]['value'])) {
+    $form['field_expected_file_format']['#access'] = FALSE;
+    $form['field_expected_filename']['#access'] = FALSE;
+  }
+}
+
